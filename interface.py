@@ -1,9 +1,13 @@
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-                             QHBoxLayout, QStackedWidget, QWidget)
+                             QHBoxLayout, QStackedWidget, QWidget, QMessageBox)
 from PyQt5.QtCore import Qt
-
+import qrcode
+from PyQt5.QtGui import QPixmap
+from io import BytesIO
+import pyotp
 
 class LoginScreen(QWidget):
+
     def __init__(self, switch_to_register):
         super().__init__()
 
@@ -34,6 +38,7 @@ class LoginScreen(QWidget):
         register_link.setStyleSheet("text-decoration: underline; color: blue;")
 
         register_link.clicked.connect(switch_to_register)
+        login_button.clicked.connect(self.login_button)
 
         # Assemble Form Layout
         form_layout.addWidget(username_label)
@@ -52,6 +57,51 @@ class LoginScreen(QWidget):
         main_layout.addWidget(register_link)
 
         self.setLayout(main_layout)
+
+
+    def login_button(self):
+        username = self.username_input.text()
+        password = self.password_input.text()
+
+        if username == "":
+            QMessageBox.warning(self, "Błąd", "Wpisz nazwę użytkownika.")
+            return
+
+
+        if username != "Klucznik" or password != "Klucznik":
+            QMessageBox.warning(self, "Błąd", "Nieprawidłowa nazwa użytkownika lub hasło.")
+            return
+        
+        self.verify_two_factor()
+
+
+    def verify_two_factor(self):
+        username = self.username_input.text()
+
+        if username == "":
+            QMessageBox.warning(self, "Błąd", "Wpisz nazwę użytkownika.")
+            return
+
+        secret_key = "EXAMPLESECRET"
+        totp = pyotp.TOTP(secret_key)
+        current_code = totp.now()
+
+        code_input = QLineEdit()
+        code_input.setPlaceholderText("Wpisz kod z aplikacji uwierzytelniającej")
+
+        msg = QMessageBox()
+        msg.setWindowTitle("Dwustopniowa weryfikacja")
+        msg.setText("Wprowadź kod wygenerowany przez aplikację uwierzytelniającą.")
+        msg.setDetailedText("Jeśli kod jest poprawny, proces logowania zostanie zakończony.")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        msg.setInformativeText("Wprowadź kod:")
+        msg.layout().addWidget(code_input, 1, 1)
+
+        if msg.exec_() == QMessageBox.Ok:
+            if code_input.text() == current_code:
+                QMessageBox.information(self, "Sukces", "Kod został zweryfikowany pomyślnie!")
+            else:
+                QMessageBox.warning(self, "Błąd", "Weryfikacja kodu nie powiodła się.")
 
 
 class RegisterScreen(QWidget):
@@ -90,6 +140,7 @@ class RegisterScreen(QWidget):
         login_link.setStyleSheet("text-decoration: underline; color: blue;")
 
         login_link.clicked.connect(switch_to_login)
+        register_button.clicked.connect(self.reg_button)
 
         # Assemble Form Layout
         form_layout.addWidget(username_label)
@@ -112,7 +163,72 @@ class RegisterScreen(QWidget):
         self.setLayout(main_layout)
 
 
+    def two_factor(self):
+        # Generate QR Code
+        secret = "otpauth://totp/Klucznik?secret=EXAMPLESECRET&issuer=Klucznik"
+        qr = qrcode.QRCode(box_size=10, border=5)
+        qr.add_data(secret)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill="black", back_color="white")
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        buffer.seek(0)
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+
+        # Show QR Code in a message box
+        msg = QMessageBox()
+        msg.setIconPixmap(pixmap)
+        msg.setWindowTitle("Dwustopniowa weryfikacja")
+        msg.setText("Zeskanuj kod QR w aplikacji uwierzytelniającej.")
+        msg.setStandardButtons(QMessageBox.Ok)
+
+        if msg.exec_() == QMessageBox.Ok:
+            QMessageBox.information(self, "Rejestracja zakończona", "Kod QR został zeskanowany. Możesz teraz się zalogować.")
+            self.parentWidget().parentWidget().show_login_screen()
+
+
+    def reg_button(self):
+
+        username = self.username_input.text()
+        password = self.password_input.text()
+        confirm_password = self.confirm_password_input.text()
+        
+        if username == "":
+            QMessageBox.warning(self, "Błąd", "Wpisz nazwę użytkownika.")
+            return
+        
+        if password == "":
+            QMessageBox.warning(self, "Błąd", "Wpisz hasło.")
+            return
+        
+        if confirm_password == "":
+            QMessageBox.warning(self, "Błąd", "Potwierdź hasło.")
+            return
+
+        if username == "Klucznik":
+            QMessageBox.warning(self, "Błąd", "Nazwa użytkownika zajęta.")
+            return
+        
+        if len(username) < 4:
+            QMessageBox.warning(self, "Błąd", "Nazwa użytkownika musi zawierać co najmniej 4 znaki.")
+            return
+
+        if len(password) < 8:
+            QMessageBox.warning(self, "Błąd", "Hasło musi zawierać co najmniej 8 znaków.")
+            return
+
+        if password != confirm_password:
+            QMessageBox.warning(self, "Błąd", "Podane hasła różnią się od siebie.")
+            return
+        
+        self.two_factor()
+        
+
 class MainApp(QWidget):
+
     def __init__(self):
         super().__init__()
 
@@ -139,3 +255,4 @@ class MainApp(QWidget):
 
     def show_register_screen(self):
         self.stacked_widget.setCurrentWidget(self.register_screen)
+
