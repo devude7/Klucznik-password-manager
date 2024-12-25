@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-                             QHBoxLayout, QStackedWidget, QWidget, QMessageBox)
+                             QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget)
 from PyQt5.QtCore import Qt
 import qrcode
 from PyQt5.QtGui import QPixmap
@@ -8,7 +8,7 @@ import pyotp
 
 class LoginScreen(QWidget):
 
-    def __init__(self, switch_to_register):
+    def __init__(self, switch_to_register, switch_to_dashboard):
         super().__init__()
 
         # Layouts
@@ -38,7 +38,7 @@ class LoginScreen(QWidget):
         register_link.setStyleSheet("text-decoration: underline; color: blue;")
 
         register_link.clicked.connect(switch_to_register)
-        login_button.clicked.connect(self.login_button)
+        login_button.clicked.connect(lambda: self.verify_two_factor(switch_to_dashboard))
 
         # Assemble Form Layout
         form_layout.addWidget(username_label)
@@ -75,7 +75,7 @@ class LoginScreen(QWidget):
         self.verify_two_factor()
 
 
-    def verify_two_factor(self):
+    def verify_two_factor(self, switch_to_dashboard):
         username = self.username_input.text()
 
         if username == "":
@@ -100,6 +100,7 @@ class LoginScreen(QWidget):
         if msg.exec_() == QMessageBox.Ok:
             if code_input.text() == current_code:
                 QMessageBox.information(self, "Sukces", "Kod został zweryfikowany pomyślnie!")
+                switch_to_dashboard()
             else:
                 QMessageBox.warning(self, "Błąd", "Weryfikacja kodu nie powiodła się.")
 
@@ -225,7 +226,38 @@ class RegisterScreen(QWidget):
             return
         
         self.two_factor()
-        
+
+
+class DashboardScreen(QWidget):
+    def __init__(self, switch_to_login):
+        super().__init__()
+
+        # Layout
+        main_layout = QVBoxLayout()
+
+        # Title
+        title = QLabel("Twoje konta")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; text-align: center;")
+        title.setAlignment(Qt.AlignCenter)
+
+        # Password List
+        self.password_list = QListWidget()
+        self.password_list.addItem("Przykładowe konto 1")
+        self.password_list.addItem("Przykładowe konto 2")
+
+        # Buttons
+        add_account_button = QPushButton("Dodaj konto")
+        back_to_login_button = QPushButton("Wyloguj się")
+        back_to_login_button.clicked.connect(switch_to_login)
+
+        # Assemble Layout
+        main_layout.addWidget(title)
+        main_layout.addWidget(self.password_list)
+        main_layout.addWidget(add_account_button)
+        main_layout.addWidget(back_to_login_button)
+
+        self.setLayout(main_layout)
+
 
 class MainApp(QWidget):
 
@@ -236,11 +268,13 @@ class MainApp(QWidget):
         self.stacked_widget = QStackedWidget()
 
         # Screens
-        self.login_screen = LoginScreen(self.show_register_screen)
+        self.login_screen = LoginScreen(self.show_register_screen, self.show_dashboard_screen)
         self.register_screen = RegisterScreen(self.show_login_screen)
+        self.dashboard_screen = DashboardScreen(self.show_login_screen)
 
         self.stacked_widget.addWidget(self.login_screen)
         self.stacked_widget.addWidget(self.register_screen)
+        self.stacked_widget.addWidget(self.dashboard_screen)
 
         # Main Layout
         main_layout = QVBoxLayout()
@@ -256,3 +290,6 @@ class MainApp(QWidget):
     def show_register_screen(self):
         self.stacked_widget.setCurrentWidget(self.register_screen)
 
+    def show_dashboard_screen(self):
+        self.stacked_widget.setCurrentWidget(self.dashboard_screen)
+ 
