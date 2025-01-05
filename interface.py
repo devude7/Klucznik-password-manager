@@ -1,3 +1,7 @@
+import sys
+import sqlite3
+import hashlib
+
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
                              QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget)
 from PyQt5.QtCore import Qt
@@ -5,6 +9,80 @@ import qrcode
 from PyQt5.QtGui import QPixmap
 from io import BytesIO
 import pyotp
+
+class  Database:
+    """class responsible for connection with SQLLITE Database, and operations on it"""
+    def __init__(self, db_name='key_keeper.db'):
+        self.conn = sqlite3.connect(db_name)
+        self.conn.row_factory = sqlite3.Row
+        self.cursor = self.conn.cursor()
+        self.create_tables()
+
+    def create_tables(self):
+        """Creates tables in database if already do not exist"""
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                totp_secret TEXT
+            )
+        """)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGET PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                account_name TEXT NOT NULL,
+                account_password TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        self.conn.commit()
+
+    def hash_password(self, password: str) -> str:
+        """hashes password with SHA256 (later replace with something more complex)"""
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def register_user(self, username: str, password: str, totp_secret: str) -> bool:
+        try:
+            self.cursor.execute("""
+                INSERT INTO users (username, password, totp_secret) VALUES (?, ?, ?)
+            """, (username, password, totp_secret))
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def get_user_by_username(self, username: str):
+        """
+            Returns user instance based upon username,
+            returns None if user was not registered
+        """
+        self.cursor.execute("""
+            SELCT * FROM users WHERE username = ?
+        """, (username,))
+        return self.cursor.fetchone()
+
+    def verify_password(self, username: str, password: str) -> bool:
+        user = self.get_user_by_username(username)
+        if not user:
+            return False
+        return user['password'] == self.hash_password(password)
+
+    def insert_account(self, user_id: int, account_name: str, account_password: str):
+        """
+        Inserts new account(instance) into accounts table, related with users data
+        """
+        self.cursor.execute("""
+            INSERT INTO accounts (user_id, account_name, account_password) VALUES (?, ?, ?)
+        """, (user_id, account_name, account_password))
+        self.conn.commit()
+
+    def get_accounts_for_user(self, user_id: int):
+        self.cursor.execute("""
+            SELECT * FROM accounts WHERE user_id = ?
+        """, (user_id,))
+        return self.cursor.fetchall()
 
 class LoginScreen(QWidget):
 
