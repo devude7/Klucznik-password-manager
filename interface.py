@@ -2,6 +2,7 @@ import sys
 import sqlite3
 import hashlib
 
+import bcrypt
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
                              QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget, QInputDialog)
 from PyQt5.QtCore import Qt
@@ -30,7 +31,7 @@ class  Database:
         """)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGET PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 account_name TEXT NOT NULL,
                 account_password TEXT,
@@ -40,26 +41,24 @@ class  Database:
         self.conn.commit()
 
     def hash_password(self, password: str) -> str:
-        """hashes password with SHA256 (later replace with something more complex)"""
-        return hashlib.sha256(password.encode()).hexdigest()
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
 
     def register_user(self, username: str, password: str, totp_secret: str) -> bool:
         try:
+            hashed = self.hash_password(password)
             self.cursor.execute("""
                 INSERT INTO users (username, password, totp_secret) VALUES (?, ?, ?)
-            """, (username, password, totp_secret))
+            """, (username, hashed, totp_secret))
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
 
     def get_user_by_username(self, username: str):
-        """
-            Returns user instance based upon username,
-            returns None if user was not registered
-        """
         self.cursor.execute("""
-            SELCT * FROM users WHERE username = ?
+            SELECT * FROM users WHERE username = ?
         """, (username,))
         return self.cursor.fetchone()
 
@@ -67,7 +66,9 @@ class  Database:
         user = self.get_user_by_username(username)
         if not user:
             return False
-        return user['password'] == self.hash_password(password)
+
+        stored_hash = user['password']
+        return bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
 
     def insert_account(self, user_id: int, account_name: str, account_password: str):
         """
