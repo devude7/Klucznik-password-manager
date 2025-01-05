@@ -4,10 +4,11 @@ import hashlib
 
 import bcrypt
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-                             QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget, QInputDialog)
-from PyQt5.QtCore import Qt
+                             QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget, QInputDialog,
+                             QListWidgetItem, QDesktopWidget)
+from PyQt5.QtCore import Qt, QTimer
 import qrcode
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QIcon
 from io import BytesIO
 import pyotp
 
@@ -85,6 +86,13 @@ class  Database:
         """, (user_id,))
         return self.cursor.fetchall()
 
+    def get_account_by_name(self, user_id, account_name):
+        self.cursor.execute("""
+            SELECT * FROM accounts WHERE user_id = ? AND account_name = ?
+        """, (user_id, account_name))
+        return self.cursor.fetchone()
+
+
 class LoginScreen(QWidget):
 
     def __init__(self, switch_to_register, switch_to_dashboard, db: Database):
@@ -98,26 +106,65 @@ class LoginScreen(QWidget):
         form_layout = QVBoxLayout()
         button_layout = QHBoxLayout()
 
+        #App logo
+        logo = QLabel()
+        pixmap = QPixmap('assets/app_logo_transparent.png')
+        pixmap = pixmap.scaled(350, 350, Qt.KeepAspectRatio)  # Maksymalny rozmiar 350px
+        logo.setPixmap(pixmap)
+        logo.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(logo)
+
         # App Title
-        title = QLabel("Klucznik - bezpieczna skrzynka")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; text-align: center;")
-        title.setAlignment(Qt.AlignCenter)
+        # title = QLabel("Klucznik - bezpieczna skrzynka")
+        # title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ff8c00;")
+        # title.setAlignment(Qt.AlignCenter)
 
         # Login Fields
         username_label = QLabel("Nazwa użytkownika")
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Wpisz nazwę użytkownika")
+        # Przeskok między polami za pomocą Enter
+        self.username_input.returnPressed.connect(self.login_button)
 
         password_label = QLabel("Hasło")
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setPlaceholderText("Wpisz hasło")
+        self.password_input.returnPressed.connect(self.login_button)
 
         # Buttons
         login_button = QPushButton("Zaloguj się")
+        login_button.setIcon(QIcon('assets/login_icon.png'))
+        login_button.setStyleSheet("padding-left: 10px; font-size: 24px")
+
+        # Zmiana ikony przy hover
+        def change_icon_on_hover():
+            login_button.setIcon(QIcon('assets/login_icon_hover.png'))
+
+        def reset_icon():
+            login_button.setIcon(QIcon('assets/login_icon.png'))
+
+        # Ustawienie akcji na hover
+        login_button.enterEvent = lambda event: change_icon_on_hover()
+        login_button.leaveEvent = lambda event: reset_icon()
+
+
         register_link = QPushButton("Nie masz konta? Zarejestruj się")
         register_link.setFlat(True)
-        register_link.setStyleSheet("text-decoration: underline; color: blue;")
+        register_link.setStyleSheet("""
+            font-weight: normal;
+            font-size: 12px;
+            text-decoration: underline;
+            color: orange;
+            background: transparent;
+            border-radius: 100px;
+
+            /* Efekt hover */
+            :hover {
+                background: yellow;
+                cursor: pointer;
+            }
+        """)
 
         register_link.clicked.connect(self.switch_to_register)
         login_button.clicked.connect(self.login_button)
@@ -131,7 +178,7 @@ class LoginScreen(QWidget):
         button_layout.addWidget(login_button)
 
         # Assemble Main Layout
-        main_layout.addWidget(title)
+        # main_layout.addWidget(title)
         main_layout.addSpacing(20)
         main_layout.addLayout(form_layout)
         main_layout.addSpacing(10)
@@ -140,21 +187,26 @@ class LoginScreen(QWidget):
 
         self.setLayout(main_layout)
 
-
     def login_button(self):
         username = self.username_input.text()
         password = self.password_input.text()
 
+        if username == "" and password == "":
+            return  # Jeśli oba pola są puste, nie rób nic
+
         if username == "":
-            QMessageBox.warning(self, "Błąd", "Wpisz nazwę użytkownika.")
+            self.username_input.setFocus()  # Jeśli brak nazwy użytkownika, ustaw focus na tym polu
+            return
+
+        if password == "":
+            self.password_input.setFocus()  # Jeśli brak hasła, ustaw focus na tym polu
             return
 
         if not self.db.verify_password(username, password):
-            QMessageBox.warning(self, 'Błąd', 'Nieprawidłowa nazwa użykownika lub hasło.')
+            QMessageBox.warning(self, 'Błąd', 'Nieprawidłowa nazwa użytkownika lub hasło.')
             return
-        
-        self.verify_two_factor()
 
+        self.verify_two_factor()
 
     def verify_two_factor(self):
         username = self.username_input.text()
@@ -166,7 +218,7 @@ class LoginScreen(QWidget):
 
         secret_key = user['totp_secret']
         if not secret_key:
-            #If user lacks 2FA, he can be immediately switched to dashboard
+            # If user lacks 2FA, they can be immediately switched to the dashboard
             self.switch_to_dashboard(user['id'])
             return
 
@@ -176,13 +228,57 @@ class LoginScreen(QWidget):
         code_input = QLineEdit()
         code_input.setPlaceholderText("Wpisz kod z aplikacji uwierzytelniającej")
 
+        # Stylizacja dla wiadomości
         msg = QMessageBox()
         msg.setWindowTitle("Dwustopniowa weryfikacja")
-        msg.setText("Wprowadź kod wygenerowany przez aplikację uwierzytelniającą.")
-        msg.setDetailedText("Jeśli kod jest poprawny, proces logowania zostanie zakończony.")
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        msg.setInformativeText("Wprowadź kod:")
+
+        # Załaduj logo jako ikonę okna
+        logo = QPixmap('assets/app_logo_image.png')  # Ścieżka do logo
+        msg.setWindowIcon(QIcon(logo))
+
+        # Dodanie pola wejściowego do layoutu wiadomości
         msg.layout().addWidget(code_input, 1, 1)
+
+        # Stylizacja okna wiadomości
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #1e1e1e;
+                color: #ff8c00;  /* Pomarańczowy kolor tekstu */
+            }
+            QLineEdit {
+                background-color: #2e2e2e;
+                border: 1px solid #ff8c00;
+                padding: 6px;
+                border-radius: 4px;
+                color: #f0e68c;
+            }
+            QPushButton {
+                background: transparent;
+                border: 2px solid #ff8c00;
+                color: #ff8c00;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px 20px;
+                width: 50%;
+                margin: 10px auto;
+                border-radius: 15px;
+            }
+            QPushButton:hover {
+                background-color: #ff8c00;
+                color: white;
+                cursor: pointer;
+            }
+            QPushButton:pressed {
+                background-color: #cc7a00;
+            }
+            QPushButton:focus {
+                outline: none;
+            }
+        """)
+
+        # Ustawienie kursora na pole wpisywania kodu
+        code_input.setFocus()
 
         if msg.exec_() == QMessageBox.Ok:
             if code_input.text() == current_code:
@@ -203,8 +299,16 @@ class RegisterScreen(QWidget):
         form_layout = QVBoxLayout()
         button_layout = QHBoxLayout()
 
+        # App logo
+        logo = QLabel()
+        pixmap = QPixmap('assets/app_logo_transparent.png')
+        pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio)  # Maksymalny rozmiar 350px
+        logo.setPixmap(pixmap)
+        logo.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(logo)
+
         # App Title
-        title = QLabel("Klucznik - rejestracja")
+        title = QLabel("Rejestracja")
         title.setStyleSheet("font-size: 24px; font-weight: bold; text-align: center;")
         title.setAlignment(Qt.AlignCenter)
 
@@ -212,22 +316,52 @@ class RegisterScreen(QWidget):
         username_label = QLabel("Nazwa użytkownika")
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Wpisz nazwę użytkownika")
+        self.username_input.returnPressed.connect(self.focus_next_widget)
 
         password_label = QLabel("Hasło")
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setPlaceholderText("Wpisz hasło")
+        self.password_input.returnPressed.connect(self.focus_next_widget)
 
         confirm_password_label = QLabel("Potwierdź hasło")
         self.confirm_password_input = QLineEdit()
         self.confirm_password_input.setEchoMode(QLineEdit.Password)
         self.confirm_password_input.setPlaceholderText("Wpisz ponownie hasło")
+        self.confirm_password_input.returnPressed.connect(self.reg_button)  # Automatycznie kliknie "Zarejestruj się"
 
         # Buttons
         register_button = QPushButton("Zarejestruj się")
+        register_button.setIcon(QIcon('assets/register_icon.png'))
+        register_button.setStyleSheet("padding-left: 10px; font-size: 24px")
+
+        # Zmiana ikony przy hover
+        def change_icon_on_hover():
+            register_button.setIcon(QIcon('assets/register_icon_hover.png'))
+
+        def reset_icon():
+            register_button.setIcon(QIcon('assets/register_icon.png'))
+
+        # Ustawienie akcji na hover
+        register_button.enterEvent = lambda event: change_icon_on_hover()
+        register_button.leaveEvent = lambda event: reset_icon()
+
         login_link = QPushButton("Masz już konto? Zaloguj się")
         login_link.setFlat(True)
-        login_link.setStyleSheet("text-decoration: underline; color: blue;")
+        login_link.setStyleSheet("""
+            font-weight: normal;
+            font-size: 12px;
+            text-decoration: underline;
+            color: orange;
+            background: transparent;
+            border-radius: 100px;
+
+            /* Efekt hover */
+            :hover {
+                background: yellow;
+                cursor: pointer;
+            }
+        """)
 
         login_link.clicked.connect(self.switch_to_login)
         register_button.clicked.connect(self.reg_button)
@@ -252,6 +386,13 @@ class RegisterScreen(QWidget):
 
         self.setLayout(main_layout)
 
+    def focus_next_widget(self):
+        # Move focus to next widget if Enter is pressed
+        widget = self.focusWidget()
+        if widget is self.username_input:
+            self.password_input.setFocus()
+        elif widget is self.password_input:
+            self.confirm_password_input.setFocus()
 
     def two_factor(self, username):
         # Generate QR Code
@@ -277,34 +418,77 @@ class RegisterScreen(QWidget):
 
         # Show QR Code in a message box
         msg = QMessageBox()
-        msg.setIconPixmap(pixmap)
+
+        # Zaokrąglone rogi dla okna
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #1e1e1e;
+                color: #ff8c00;  /* Pomarańczowy kolor tekstu */
+                border-radius: 15px;
+            }
+            QMessageBox QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                font-style: italic;
+                color: #ff8c00;
+            }
+            QMessageBox QPushButton {
+                background: transparent;
+                border: 2px solid #ff8c00;
+                color: #ff8c00;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px 20px;
+                width: 50%;
+                margin: 10px auto;
+                border-radius: 15px;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #ff8c00;
+                color: white;
+                cursor: pointer;
+            }
+        """)
+
+        # Load logo as icon for the message box
+        logo = QPixmap('assets/app_logo_image.png')  # Ścieżka do logo
+
+        # Set window icon to logo
+        msg.setWindowIcon(QIcon(logo))
         msg.setWindowTitle("Dwustopniowa weryfikacja")
-        msg.setText("Zeskanuj kod QR w aplikacji uwierzytelniającej.")
+
+        # Set the QR code as the icon of the message box
+        msg.setIconPixmap(pixmap)
+
+        # Ustawienie stylu dla tekstu pod kodem QR
+        msg.setText(
+            "<p style='font-weight: bold; font-style: italic; text-align: center; color: #ff8c00; padding-top: 20px;'>Zeskanuj kod QR w aplikacji uwierzytelniającej.</p>")
+
         msg.setStandardButtons(QMessageBox.Ok)
 
+        # Show the message box
         if msg.exec_() == QMessageBox.Ok:
-            QMessageBox.information(self, "Rejestracja zakończona", "Kod QR został zeskanowany. Możesz teraz się zalogować.")
+            QMessageBox.information(self, "Rejestracja zakończona",
+                                    "Kod QR został zeskanowany. Możesz teraz się zalogować.")
             self.switch_to_login()
 
-
     def reg_button(self):
-
         username = self.username_input.text().strip()
         password = self.password_input.text()
         confirm_password = self.confirm_password_input.text()
-        
+
         if username == "":
             QMessageBox.warning(self, "Błąd", "Wpisz nazwę użytkownika.")
             return
-        
+
         if password == "":
             QMessageBox.warning(self, "Błąd", "Wpisz hasło.")
             return
-        
+
         if confirm_password == "":
             QMessageBox.warning(self, "Błąd", "Potwierdź hasło.")
             return
-        
+
         if len(username) < 4:
             QMessageBox.warning(self, "Błąd", "Nazwa użytkownika musi zawierać co najmniej 4 znaki.")
             return
@@ -325,6 +509,10 @@ class RegisterScreen(QWidget):
         self.two_factor(username)
 
 
+from PyQt5.QtWidgets import QListWidgetItem, QLabel, QVBoxLayout
+import pyperclip
+
+
 class DashboardScreen(QWidget):
     def __init__(self, switch_to_login, db: Database):
         super().__init__()
@@ -335,6 +523,14 @@ class DashboardScreen(QWidget):
         # Layout
         main_layout = QVBoxLayout()
 
+        # App logo
+        logo = QLabel()
+        pixmap = QPixmap('assets/app_logo_image.png')
+        pixmap = pixmap.scaled(100, 100, Qt.KeepAspectRatio)  # Maksymalny rozmiar 100px
+        logo.setPixmap(pixmap)
+        logo.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(logo)
+
         # Title
         title = QLabel("Twoje konta")
         title.setStyleSheet("font-size: 24px; font-weight: bold; text-align: center;")
@@ -342,6 +538,18 @@ class DashboardScreen(QWidget):
 
         # Password List
         self.password_list = QListWidget()
+        self.password_list.setStyleSheet("font-size: 18px;")
+
+        # Connect click event to copy password to clipboard
+        self.password_list.itemClicked.connect(self.copy_password_to_clipboard)
+
+        # Initialize notification label
+        self.notification_label = QLabel(self)
+        self.notification_label.setStyleSheet(
+            "font-size: 18px; color: #e7673b; background-color: #ffbf69; padding: 5px; border-radius: 5px;")
+        self.notification_label.setAlignment(Qt.AlignCenter)
+        self.notification_label.setVisible(False)  # Initially hidden
+        main_layout.addWidget(self.notification_label)
 
         # Buttons
         add_account_button = QPushButton("Dodaj konto")
@@ -364,7 +572,7 @@ class DashboardScreen(QWidget):
 
     def update_account_list(self):
         """
-        Downloads from database list of accounts for logged user and updates QListWidgets
+        Downloads from database list of accounts for logged user and updates QListWidget
         """
         self.password_list.clear()
         if self.user_id is None:
@@ -372,8 +580,29 @@ class DashboardScreen(QWidget):
 
         accounts = self.db.get_accounts_for_user(self.user_id)
         for account in accounts:
-            display_text = f"{account['account_name']} - {account['account_password']}"
-            self.password_list.addItem(display_text)
+            # Initially display passwords as masked
+            masked_password = '*********'
+            account_item = QListWidgetItem(f"{account['account_name']} - {masked_password}")
+            account_item.setData(Qt.UserRole, account['account_password'])
+            account_item.setTextAlignment(Qt.AlignLeft)
+            self.password_list.addItem(account_item)
+
+            # Add hover event to reveal password
+            account_item.setToolTip(account['account_password'])  # Optional: tool tip
+            account_item.setData(Qt.UserRole + 1, False)  # Track if password is currently masked
+
+    def on_item_hovered(self, item):
+        """
+        Show password on hover
+        """
+        if not item.data(Qt.UserRole + 1):  # Check if password is currently masked
+            original_password = item.data(Qt.UserRole)
+            item.setText(f"{item.text().split(' - ')[0]} - {original_password}")
+            item.setData(Qt.UserRole + 1, True)  # Set to unmasked
+        else:
+            masked_password = '*********'
+            item.setText(f"{item.text().split(' - ')[0]} - {masked_password}")
+            item.setData(Qt.UserRole + 1, False)  # Set back to masked
 
     def add_account_dialog(self):
         """
@@ -381,18 +610,62 @@ class DashboardScreen(QWidget):
         """
         account_name, ok = QInputDialog.getText(self, 'Dodaj konto', 'Nazwa konta:')
         if not ok or not account_name:
+            # Show error notification if account name is empty
+            self.show_error_notification("Nazwa konta nie może być pusta!")
             return
 
-        account_password, ok = QInputDialog.getText(self, 'Dodaj konto', 'Hasło konta', QLineEdit.Password)
+        # Check if the account name already exists
+        existing_account = self.db.get_account_by_name(self.user_id, account_name)
+        if existing_account:
+            # Show error notification if account already exists
+            self.show_error_notification(f"Konto o nazwie '{account_name}' już istnieje!")
+            return
+
+        account_password, ok = QInputDialog.getText(self, f'Ustaw hasło', f'Hasło do konta {account_name}',
+                                                    QLineEdit.Password)
         if not ok:
             return
 
         self.db.insert_account(self.user_id, account_name, account_password)
         self.update_account_list()
 
+    def show_error_notification(self, message):
+        """
+        Shows an error notification with the given message
+        """
+        self.notification_label.setText(message)
+        self.notification_label.setStyleSheet(
+            "font-size: 18px; color: #e7673b; background-color: #ffbf69; padding: 5px; border-radius: 5px;")
+        self.notification_label.setVisible(True)
+
+        # Hide the notification after 3 seconds
+        QTimer.singleShot(3000, self.hide_notification)
+
     def logout(self):
         self.user_id = None
         self.switch_to_login()
+
+    def copy_password_to_clipboard(self, item):
+        """
+        Copies password to clipboard when clicked
+        """
+        password = item.data(Qt.UserRole)
+        account_name = item.text().split(" - ")[0]  # Get the account name from the text
+        pyperclip.copy(password)
+
+        # Show notification
+        self.notification_label.setText(f"Skopiowano hasło do {account_name}")
+        self.notification_label.setVisible(True)
+
+        # Hide the notification after 3 seconds
+        QTimer.singleShot(3000, self.hide_notification)
+
+    def hide_notification(self):
+        """
+        Hides the notification label
+        """
+        self.notification_label.setVisible(False)
+
 
 class MainApp(QWidget):
 
@@ -400,6 +673,55 @@ class MainApp(QWidget):
         super().__init__()
 
         self.db = Database()
+        self.resize(700, 400)
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1e1e1e;
+                color: #f0e68c;
+            }
+            QPushButton {
+                background: transparent;
+                border: 2px solid #ff8c00;
+                color: #ff8c00;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px 20px;
+                width: 50%;
+                margin: 10px auto;
+                border-radius: 15px;
+            }
+            QPushButton:hover {
+                background-color: #ff8c00;
+                color: white;
+                cursor: pointer;
+            }
+            QPushButton:pressed {
+                background-color: #cc7a00;
+            }
+            QPushButton:focus {
+                outline: none;
+            }
+            QLineEdit {
+                background-color: #2e2e2e;
+                border: 1px solid #ff8c00;
+                padding: 6px;
+                border-radius: 4px;
+                color: #f0e68c;
+            }
+            QLabel {
+                font-size: 14px;
+            }
+            QInputDialog QLineEdit {
+                background-color: #2e2e2e;
+                border: 1px solid #ff8c00;
+                padding: 6px;
+                border-radius: 4px;
+                color: #f0e68c;
+            }
+        """)
+
+        # Ustawienie ikony aplikacji (ikona w górnym pasku i ikona aplikacji na pulpicie)
+        self.setWindowIcon(QIcon('assets/app_logo_image.png'))
 
         # Stacked Widget
         self.stacked_widget = QStackedWidget()
@@ -428,8 +750,19 @@ class MainApp(QWidget):
         main_layout.addWidget(self.stacked_widget)
         self.setLayout(main_layout)
 
-        self.setWindowTitle("Klucznik - bezpieczna skrzynka")
-        self.resize(400, 300)
+        self.setWindowTitle("Klucznik - bezpieczna skrytka")
+        self.resize(450, 300)
+
+        # Wyśrodkowanie aplikacji
+        self.center()
+
+    def center(self):
+        """Wyśrodkowanie okna na ekranie"""
+        screen = QDesktopWidget().screenGeometry()  # Pobierz rozmiar ekranu
+        size = self.geometry()  # Pobierz rozmiar okna
+        x = (screen.width() - size.width()) // 2
+        y = 150
+        self.move(x, y)  # Przesuń okno na wyśrodkowaną pozycję
 
     def show_login_screen(self):
         self.stacked_widget.setCurrentWidget(self.login_screen)
@@ -440,4 +773,3 @@ class MainApp(QWidget):
     def show_dashboard_screen(self, user_id: int):
         self.dashboard_screen.show_dashboard_for_user(user_id)
         self.stacked_widget.setCurrentWidget(self.dashboard_screen)
- 
