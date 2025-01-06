@@ -1,11 +1,13 @@
 import sys
 import sqlite3
 import hashlib
+import string
+import random
 
 import bcrypt
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
                              QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget, QInputDialog,
-                             QListWidgetItem, QDesktopWidget)
+                             QListWidgetItem, QDesktopWidget, QDialog)
 from PyQt5.QtCore import Qt, QTimer
 import qrcode
 from PyQt5.QtGui import QPixmap, QIcon
@@ -605,29 +607,60 @@ class DashboardScreen(QWidget):
             item.setData(Qt.UserRole + 1, False)  # Set back to masked
 
     def add_account_dialog(self):
-        """
-        Adds new account instance for logged user
-        """
-        account_name, ok = QInputDialog.getText(self, 'Dodaj konto', 'Nazwa konta:')
-        if not ok or not account_name:
-            # Show error notification if account name is empty
-            self.show_error_notification("Nazwa konta nie może być pusta!")
-            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Dodaj konto')
+        layout = QVBoxLayout(dialog)
 
-        # Check if the account name already exists
-        existing_account = self.db.get_account_by_name(self.user_id, account_name)
-        if existing_account:
-            # Show error notification if account already exists
-            self.show_error_notification(f"Konto o nazwie '{account_name}' już istnieje!")
-            return
+        # Account name input
+        name_label = QLabel('Nazwa konta:', dialog)
+        name_input = QLineEdit(dialog)
+        layout.addWidget(name_label)
+        layout.addWidget(name_input)
 
-        account_password, ok = QInputDialog.getText(self, f'Ustaw hasło', f'Hasło do konta {account_name}',
-                                                    QLineEdit.Password)
-        if not ok:
-            return
+        # Password input
+        password_label = QLabel('Hasło:', dialog)
+        password_input = QLineEdit(dialog)
+        password_input.setEchoMode(QLineEdit.Password)
+        layout.addWidget(password_label)
+        layout.addWidget(password_input)
 
-        self.db.insert_account(self.user_id, account_name, account_password)
-        self.update_account_list()
+        # Generate password button
+        def generate_password():
+            allowed_punctuation = ''.join(c for c in string.punctuation if c not in r'\/\'":;|<>')
+            all_characters = string.ascii_letters + string.digits + allowed_punctuation
+            password = ''.join(random.choices(all_characters, k=30))
+            password_input.setText(password)
+
+        generate_button = QPushButton('Wygeneruj hasło', dialog)
+        generate_button.clicked.connect(generate_password)
+        layout.addWidget(generate_button)
+
+        # Add buttons for OK and Cancel
+        buttons_layout = QHBoxLayout()
+        ok_button = QPushButton('OK', dialog)
+        ok_button.clicked.connect(dialog.accept)
+        cancel_button = QPushButton('Anuluj', dialog)
+        cancel_button.clicked.connect(dialog.reject)
+        buttons_layout.addWidget(ok_button)
+        buttons_layout.addWidget(cancel_button)
+
+        layout.addLayout(buttons_layout)
+
+        if dialog.exec_() == QDialog.Accepted:
+            account_name = name_input.text()
+            account_password = password_input.text()
+
+            if not account_name:
+                QMessageBox.critical(self, 'Błąd', 'Nazwa konta nie może być pusta!')
+                return
+
+            existing_account = self.db.get_account_by_name(self.user_id, account_name)
+            if existing_account:
+                QMessageBox.critical(self, 'Błąd', f"Konto o nazwie '{account_name}' już istnieje!")
+                return
+
+            self.db.insert_account(self.user_id, account_name, account_password)
+            self.update_account_list()
 
     def show_error_notification(self, message):
         """
