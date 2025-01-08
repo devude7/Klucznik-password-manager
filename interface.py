@@ -8,7 +8,7 @@ import bcrypt
 from PyQt5.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout,
                              QHBoxLayout, QStackedWidget, QWidget, QMessageBox, QListWidget, QInputDialog,
                              QListWidgetItem, QDesktopWidget, QDialog)
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QSize
 import qrcode
 from PyQt5.QtGui import QPixmap, QIcon
 from io import BytesIO
@@ -93,6 +93,23 @@ class  Database:
             SELECT * FROM accounts WHERE user_id = ? AND account_name = ?
         """, (user_id, account_name))
         return self.cursor.fetchone()
+
+    def update_password(self, user_id: int, account_name: str, new_password: str):
+        """Updates the password for a specific account"""
+        self.cursor.execute("""
+            UPDATE accounts
+            SET account_password = ?
+            WHERE user_id = ? AND account_name = ?
+        """, (new_password, user_id, account_name))
+        self.conn.commit()
+
+    def delete_account(self, user_id: int, account_name: str):
+        """Deletes a specific account from the database"""
+        self.cursor.execute("""
+            DELETE FROM accounts
+            WHERE user_id = ? AND account_name = ?
+        """, (user_id, account_name))
+        self.conn.commit()
 
 
 class LoginScreen(QWidget):
@@ -574,7 +591,7 @@ class DashboardScreen(QWidget):
 
     def update_account_list(self):
         """
-        Downloads from database list of accounts for logged user and updates QListWidget
+        Downloads from the database list of accounts for the logged user and updates QListWidget
         """
         self.password_list.clear()
         if self.user_id is None:
@@ -584,14 +601,86 @@ class DashboardScreen(QWidget):
         for account in accounts:
             # Initially display passwords as masked
             masked_password = '*********'
-            account_item = QListWidgetItem(f"{account['account_name']} - {masked_password}")
+            account_text = f"{account['account_name']} - {masked_password}"
+
+            # Create QListWidgetItem to display account info
+            account_item = QListWidgetItem(account_text)
             account_item.setData(Qt.UserRole, account['account_password'])
             account_item.setTextAlignment(Qt.AlignLeft)
-            self.password_list.addItem(account_item)
 
-            # Add hover event to reveal password
-            account_item.setToolTip(account['account_password'])  # Optional: tool tip
-            account_item.setData(Qt.UserRole + 1, False)  # Track if password is currently masked
+            # Add edit and delete icons
+            edit_icon = QIcon('assets/ic_edit.png')
+            delete_icon = QIcon('assets/ic_delete.png')
+
+            # Create buttons for edit and delete
+            edit_button = QPushButton(edit_icon, "")
+            delete_button = QPushButton(delete_icon, "")
+
+            # Set the buttons to be 30x30
+            edit_button.setFixedSize(30, 30)
+            delete_button.setFixedSize(30, 30)
+
+            # Make buttons flat and transparent
+            edit_button.setFlat(True)
+            delete_button.setFlat(True)
+            edit_button.setStyleSheet("background: transparent; border: none")
+            delete_button.setStyleSheet("background: transparent; border: none")
+
+            # Set tooltip text for hover
+            edit_button.setToolTip("Kliknij, aby edytować")
+            delete_button.setToolTip("Kliknij, aby usunąć")
+
+            # Connect the edit and delete buttons to their respective methods
+            edit_button.clicked.connect(lambda checked, item=account_item: self.edit_password_dialog(item))
+            delete_button.clicked.connect(lambda checked, item=account_item: self.delete_password_dialog(item))
+
+            # Create a layout for text and buttons
+            layout = QHBoxLayout()
+
+            # Add the account name text as a QLabel (this keeps the text visible)
+            account_label = QLabel(account_text)
+            account_label.setAlignment(Qt.AlignLeft)
+
+            # Add the buttons to the layout, with spacing
+            layout.addWidget(account_label)
+            layout.addStretch()  # This makes sure the text is pushed to the left
+            layout.addWidget(edit_button)
+            layout.addSpacing(15)  # Add space between the icons
+            layout.addWidget(delete_button)
+            layout.setContentsMargins(0, 0, 10, 0)  # Add padding on the right
+
+            # Create a QWidget for the layout and add it to the item
+            button_widget = QWidget()
+            button_widget.setLayout(layout)
+
+            # Add the item and the button widget to the list
+            self.password_list.addItem(account_item)
+            self.password_list.setItemWidget(account_item, button_widget)
+
+            # Add hover effect for account items
+            self.add_hover_effect(account_item, layout)
+
+            # Set tooltip for the account password (only for hover or click)
+            account_item.setToolTip(account['account_password'])
+
+    def add_hover_effect(self, account_item, layout):
+        """
+        Adds hover effect for account items in the list
+        """
+
+        def on_hover_enter():
+            # Change background color to light gray when hover begins
+            layout.setStyleSheet("background-color: rgba(169, 169, 169, 0.2);")  # Light gray hover effect
+
+        def on_hover_leave():
+            # Reset background color when hover ends
+            layout.setStyleSheet("")
+
+        layout.installEventFilter(self)
+
+        # Connect hover events
+        layout.mouseMoveEvent = on_hover_enter
+        layout.mouseLeaveEvent = on_hover_leave
 
     def on_item_hovered(self, item):
         """
@@ -606,6 +695,139 @@ class DashboardScreen(QWidget):
             item.setText(f"{item.text().split(' - ')[0]} - {masked_password}")
             item.setData(Qt.UserRole + 1, False)  # Set back to masked
 
+    def hide_notification(self):
+        """
+        Hides the notification label
+        """
+        self.notification_label.setVisible(False)
+
+    def edit_password_dialog(self, item):
+        """
+        Opens a dialog to edit the password
+        """
+        current_password = item.data(Qt.UserRole)
+        account_name = item.text().split(" - ")[0]
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f'Edycja hasła dla {account_name}')
+        layout = QVBoxLayout(dialog)
+
+        # New password input fields
+        new_password_label = QLabel('Nowe hasło:', dialog)
+        new_password_input = QLineEdit(dialog)
+        new_password_input.setEchoMode(QLineEdit.Password)
+
+        # Eye icon for password visibility toggle
+        toggle_eye_button = QPushButton(dialog)
+        toggle_eye_button.setIcon(QIcon('assets/ic_eye_inline.png'))  # Default eye icon
+        toggle_eye_button.setFixedSize(30, 30)
+        toggle_eye_button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                padding: 10px;
+                background: transparent;
+            }
+            QPushButton:hover {
+                icon-size: 35px;
+                background: transparent;
+            }
+        """)
+
+        # Layout for password input and the eye icon
+        password_layout = QHBoxLayout()
+        password_layout.addWidget(new_password_input)
+        password_layout.addWidget(toggle_eye_button)
+        layout.addWidget(new_password_label)
+        layout.addLayout(password_layout)
+
+        # Confirm password input
+        confirm_password_label = QLabel('Potwierdź hasło:', dialog)
+        confirm_password_input = QLineEdit(dialog)
+        confirm_password_input.setEchoMode(QLineEdit.Password)
+        layout.addWidget(confirm_password_label)
+        layout.addWidget(confirm_password_input)
+
+        # Function to toggle password visibility
+        def toggle_password_visibility():
+            if new_password_input.echoMode() == QLineEdit.Password:
+                new_password_input.setEchoMode(QLineEdit.Normal)
+                toggle_eye_button.setIcon(QIcon('assets/ic_eye_outline.png'))
+            else:
+                new_password_input.setEchoMode(QLineEdit.Password)
+                toggle_eye_button.setIcon(QIcon('assets/ic_eye_inline.png'))
+
+        toggle_eye_button.clicked.connect(toggle_password_visibility)
+
+        # Function to generate a new password
+        def generate_password():
+            allowed_punctuation = ''.join(c for c in string.punctuation if c not in r'\/\'":;|<>')
+            all_characters = string.ascii_letters + string.digits + allowed_punctuation
+            password = ''.join(random.choices(all_characters, k=30))
+            new_password_input.setText(password)
+            confirm_password_input.setText(password)  # Set the same password in confirm field
+
+        generate_button = QPushButton('Wygeneruj hasło', dialog)
+        generate_button.clicked.connect(generate_password)
+        layout.addWidget(generate_button)
+
+        # Buttons
+        buttons_layout = QHBoxLayout()
+        ok_button = QPushButton('Zapisz', dialog)
+        cancel_button = QPushButton('Anuluj', dialog)
+        buttons_layout.addWidget(ok_button)
+        buttons_layout.addWidget(cancel_button)
+
+        layout.addLayout(buttons_layout)
+
+        # Use a lambda to pass the item to update_password function
+        ok_button.clicked.connect(
+            lambda: self.update_password(item, new_password_input.text(), confirm_password_input.text(), dialog)
+        )
+        cancel_button.clicked.connect(dialog.reject)
+
+        dialog.exec_()
+
+    def update_password(self, item, new_password, confirm_password, dialog):
+        """
+        Updates the password if valid
+        """
+        if len(new_password) < 8:
+            QMessageBox.warning(self, "Błąd", "Hasło musi mieć co najmniej 8 znaków!")
+            return
+
+        if new_password != confirm_password:
+            QMessageBox.warning(self, "Błąd", "Hasła nie są zgodne!")
+            return
+
+        account_name = item.text().split(" - ")[0]
+
+        try:
+            self.db.update_password(self.user_id, account_name, new_password)
+            item.setData(Qt.UserRole, new_password)  # Update password in list
+            self.update_account_list()
+            QMessageBox.information(self, "Sukces", "Hasło zostało zaktualizowane.")
+            dialog.accept()  # Close the dialog upon success
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd", f"Nie udało się zaktualizować hasła: {e}")
+
+    def delete_password_dialog(self, item):
+        """
+        Shows a confirmation dialog to delete the password
+        """
+        account_name = item.text().split(" - ")[0]
+
+        reply = QMessageBox.question(self, 'Potwierdzenie',
+                                     f"Czy na pewno chcesz usunąć hasło do konta {account_name}?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            self.db.delete_account(self.user_id, account_name)
+            self.update_account_list()
+
+    def logout(self):
+        self.user_id = None
+        self.switch_to_login()
+
     def add_account_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle('Dodaj konto')
@@ -617,12 +839,44 @@ class DashboardScreen(QWidget):
         layout.addWidget(name_label)
         layout.addWidget(name_input)
 
-        # Password input
+        # Password input with eye icon button
         password_label = QLabel('Hasło:', dialog)
         password_input = QLineEdit(dialog)
         password_input.setEchoMode(QLineEdit.Password)
+
+        # Tworzenie przycisku do podglądu hasła
+        toggle_eye_button = QPushButton(dialog)
+        toggle_eye_button.setIcon(QIcon('assets/ic_eye_inline.png'))  # Początkowa ikonka oczka
+        toggle_eye_button.setFixedSize(30, 30)
+        toggle_eye_button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                padding: 10px;  /* Zwiększenie klikalnego obszaru */
+                background: transparent; 
+            }
+            QPushButton:hover {
+                icon-size: 35px;  /* Powiększenie ikonki przy najechaniu */
+                background: transparent; 
+            }
+        """)
+
+        # Kontener na pole hasła i przycisk z oczkiem
+        password_layout = QHBoxLayout()
+        password_layout.addWidget(password_input)
+        password_layout.addWidget(toggle_eye_button)
         layout.addWidget(password_label)
-        layout.addWidget(password_input)
+        layout.addLayout(password_layout)
+
+        def toggle_password_visibility():
+            """Przełącza widoczność hasła i zmienia ikonę przycisku."""
+            if password_input.echoMode() == QLineEdit.Password:
+                password_input.setEchoMode(QLineEdit.Normal)
+                toggle_eye_button.setIcon(QIcon('assets/ic_eye_outline.png'))
+            else:
+                password_input.setEchoMode(QLineEdit.Password)
+                toggle_eye_button.setIcon(QIcon('assets/ic_eye_inline.png'))
+
+        toggle_eye_button.clicked.connect(toggle_password_visibility)
 
         # Generate password button
         def generate_password():
@@ -638,13 +892,42 @@ class DashboardScreen(QWidget):
         # Add buttons for OK and Cancel
         buttons_layout = QHBoxLayout()
         ok_button = QPushButton('OK', dialog)
-        ok_button.clicked.connect(dialog.accept)
         cancel_button = QPushButton('Anuluj', dialog)
-        cancel_button.clicked.connect(dialog.reject)
         buttons_layout.addWidget(ok_button)
         buttons_layout.addWidget(cancel_button)
 
+        # Ograniczenie obszaru klikalnego do wnętrza przycisku
+        ok_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: 2px solid #ff8c00;
+                color: #ff8c00;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #ff8c00;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #cc7a00;
+            }
+            QPushButton:focus {
+                outline: none;
+            }
+        """)
+        cancel_button.setStyleSheet(ok_button.styleSheet())  # Taki sam styl jak dla OK
+
+        ok_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
         layout.addLayout(buttons_layout)
+
+        def on_enter_pressed():
+            ok_button.click()
+
+        # Nasłuchujemy na naciśnięcie klawisza Enter
+        name_input.returnPressed.connect(on_enter_pressed)
+        password_input.returnPressed.connect(on_enter_pressed)
 
         if dialog.exec_() == QDialog.Accepted:
             account_name = name_input.text()
