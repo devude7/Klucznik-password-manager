@@ -301,7 +301,7 @@ class LoginScreen(QWidget):
 
         if msg.exec_() == QMessageBox.Ok:
             if code_input.text() == current_code:
-                QMessageBox.information(self, "Sukces", "Kod został zweryfikowany pomyślnie!")
+                #QMessageBox.information(self, "Sukces", "Kod został zweryfikowany pomyślnie!")
                 self.switch_to_dashboard(user['id'])
             else:
                 QMessageBox.warning(self, "Błąd", "Weryfikacja kodu nie powiodła się.")
@@ -589,7 +589,27 @@ class DashboardScreen(QWidget):
         self.user_id = user_id
         self.update_account_list()
 
+
+
     def update_account_list(self):
+        def add_icon_hover_effect(button: QPushButton, normal_icon_path: str, hover_icon_path: str):
+            """
+            Dodaje efekt zmiany ikony na hover dla przycisku QPushButton.
+            """
+            normal_icon = QIcon(normal_icon_path)
+            hover_icon = QIcon(hover_icon_path)
+
+            def on_hover_enter(event):
+                button.setIcon(hover_icon)
+                super(QPushButton, button).enterEvent(event)
+
+            def on_hover_leave(event):
+                button.setIcon(normal_icon)
+                super(QPushButton, button).leaveEvent(event)
+
+            button.setIcon(normal_icon)
+            button.enterEvent = on_hover_enter
+            button.leaveEvent = on_hover_leave
         """
         Downloads from the database list of accounts for the logged user and updates QListWidget
         """
@@ -623,12 +643,36 @@ class DashboardScreen(QWidget):
             # Make buttons flat and transparent
             edit_button.setFlat(True)
             delete_button.setFlat(True)
-            edit_button.setStyleSheet("background: transparent; border: none")
-            delete_button.setStyleSheet("background: transparent; border: none")
 
             # Set tooltip text for hover
             edit_button.setToolTip("Kliknij, aby edytować")
             delete_button.setToolTip("Kliknij, aby usunąć")
+
+            add_icon_hover_effect(edit_button, 'assets/ic_edit.png', 'assets/ic_edit_hover.png')
+            add_icon_hover_effect(delete_button, 'assets/ic_delete.png', 'assets/ic_delete_hover.png')
+
+            # Add hover effect for changing icons
+            edit_button.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                    image: url('assets/ic_edit.png');
+                }
+                QPushButton:hover {
+                    image: url('assets/ic_edit_hover.png');
+                }
+            """)
+
+            delete_button.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                    image: url('assets/ic_delete.png');
+                }
+                QPushButton:hover {
+                    image: url('assets/ic_delete_hover.png');
+                }
+            """)
 
             # Connect the edit and delete buttons to their respective methods
             edit_button.clicked.connect(lambda checked, item=account_item: self.edit_password_dialog(item))
@@ -694,6 +738,7 @@ class DashboardScreen(QWidget):
             masked_password = '*********'
             item.setText(f"{item.text().split(' - ')[0]} - {masked_password}")
             item.setData(Qt.UserRole + 1, False)  # Set back to masked
+
 
     def hide_notification(self):
         """
@@ -816,9 +861,23 @@ class DashboardScreen(QWidget):
         """
         account_name = item.text().split(" - ")[0]
 
-        reply = QMessageBox.question(self, 'Potwierdzenie',
-                                     f"Czy na pewno chcesz usunąć hasło do konta {account_name}?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox(self)
+        reply.setWindowTitle('Potwierdzenie')
+        reply.setText(f"Czy na pewno chcesz usunąć hasło do konta {account_name}?")
+        reply.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+
+        # Zamień tekst przycisków
+        yes_button = reply.button(QMessageBox.Yes)
+        no_button = reply.button(QMessageBox.No)
+        yes_button.setText("Tak")
+        no_button.setText("Nie")
+
+        # Ustaw domyślny przycisk
+        reply.setDefaultButton(QMessageBox.No)
+
+        if reply.exec_() == QMessageBox.Yes:
+            # Kod usuwania hasła
+            pass
 
         if reply == QMessageBox.Yes:
             self.db.delete_account(self.user_id, account_name)
@@ -882,7 +941,7 @@ class DashboardScreen(QWidget):
         def generate_password():
             allowed_punctuation = ''.join(c for c in string.punctuation if c not in r'\/\'":;|<>')
             all_characters = string.ascii_letters + string.digits + allowed_punctuation
-            password = ''.join(random.choices(all_characters, k=30))
+            password = ''.join(random.choices(all_characters, k=random.randint(25,30)))
             password_input.setText(password)
 
         generate_button = QPushButton('Wygeneruj hasło', dialog)
