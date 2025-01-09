@@ -14,6 +14,26 @@ from PyQt5.QtGui import QPixmap, QIcon
 from io import BytesIO
 import pyotp
 
+from cryptography.fernet import Fernet
+import os
+import keyring
+
+SERVICE_NAME = 'KlucznikApp'
+USERNAME = "encryption_key"
+
+def generate_and_store_key():
+    key = Fernet.generate_key()
+    keyring.set_password(SERVICE_NAME, USERNAME, key.decode('utf-8'))
+    return key
+
+def load_key():
+    key = keyring.get_password(SERVICE_NAME, USERNAME)
+    if key is None:
+        key = generate_and_store_key()
+    else:
+        key = key.encode('utf-8')
+    return key
+
 class  Database:
     """class responsible for connection with SQLLITE Database, and operations on it"""
     def __init__(self, db_name='key_keeper.db'):
@@ -21,6 +41,9 @@ class  Database:
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
         self.create_tables()
+
+        key = load_key()
+        self.cipher_suite = Fernet(key)
 
     def create_tables(self):
         """Creates tables in database if already do not exist"""
@@ -73,34 +96,57 @@ class  Database:
         stored_hash = user['password']
         return bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
 
+    def encrypt_password(self, plain_text_password: str) -> str:
+        encrypted = self.cipher_suite.encrypt(plain_text_password.encode('utf-8'))
+        return encrypted.decode('utf-8')
+
+    def decrypt_password(self, encrypted_text_password: str) -> str:
+        decrypted = self.cipher_suite.decrypt(encrypted_text_password.encode('utf-8'))
+        return decrypted.decode('utf-8')
+
     def insert_account(self, user_id: int, account_name: str, account_password: str):
         """
         Inserts new account(instance) into accounts table, related with users data
         """
+        encrypted_password = self.encrypt_password(account_password)
         self.cursor.execute("""
             INSERT INTO accounts (user_id, account_name, account_password) VALUES (?, ?, ?)
-        """, (user_id, account_name, account_password))
+        """, (user_id, account_name, encrypted_password))
         self.conn.commit()
 
     def get_accounts_for_user(self, user_id: int):
         self.cursor.execute("""
             SELECT * FROM accounts WHERE user_id = ?
         """, (user_id,))
-        return self.cursor.fetchall()
+        accounts = self.cursor.fetchall()
+        decrypted_accounts = []
+        for account in accounts:
+            decrypted_password = self.decrypt_password(account['account_password']) if account['account_password'] else None
+            decrypted_account = dict(account)
+            decrypted_account['account_password'] = decrypted_password
+            decrypted_accounts.append(decrypted_account)
+        return decrypted_accounts
 
     def get_account_by_name(self, user_id, account_name):
         self.cursor.execute("""
             SELECT * FROM accounts WHERE user_id = ? AND account_name = ?
         """, (user_id, account_name))
-        return self.cursor.fetchone()
+        account = self.cursor.fetchone()
+        if account and account['account_password']:
+            decrypted_password = self.decrypt_password(account['account_password'])
+            decrypted_account = dict(account)
+            decrypted_account['account_password'] = decrypted_password
+            return decrypted_account
+        return account
 
     def update_password(self, user_id: int, account_name: str, new_password: str):
         """Updates the password for a specific account"""
+        encrypted_password = self.encrypt_password(new_password)
         self.cursor.execute("""
             UPDATE accounts
             SET account_password = ?
             WHERE user_id = ? AND account_name = ?
-        """, (new_password, user_id, account_name))
+        """, (encrypted_password, user_id, account_name))
         self.conn.commit()
 
     def delete_account(self, user_id: int, account_name: str):
@@ -1148,3 +1194,4 @@ class MainApp(QWidget):
     def show_dashboard_screen(self, user_id: int):
         self.dashboard_screen.show_dashboard_for_user(user_id)
         self.stacked_widget.setCurrentWidget(self.dashboard_screen)
+
