@@ -352,6 +352,13 @@ class LoginScreen(QWidget):
             else:
                 QMessageBox.warning(self, "Błąd", "Weryfikacja kodu nie powiodła się.")
 
+    def clear_fields(self):
+        """
+        Clears the login fields
+        """
+        self.username_input.clear()
+        self.password_input.clear()
+
 
 class RegisterScreen(QWidget):
     def __init__(self, switch_to_login, db: Database):
@@ -922,16 +929,20 @@ class DashboardScreen(QWidget):
         reply.setDefaultButton(QMessageBox.No)
 
         if reply.exec_() == QMessageBox.Yes:
-            # Kod usuwania hasła
-            pass
+            self.db.delete_account(self.user_id, account_name)
+            self.update_account_list()
 
         if reply == QMessageBox.Yes:
             self.db.delete_account(self.user_id, account_name)
             self.update_account_list()
 
     def logout(self):
+        """
+        Logs out the user and clears login fields
+        """
         self.user_id = None
         self.switch_to_login()
+        self.clear_login_fields()  # Clear the login fields after logout
 
     def add_account_dialog(self):
         dialog = QDialog(self)
@@ -1186,6 +1197,7 @@ class MainApp(QWidget):
         self.move(x, y)  # Przesuń okno na wyśrodkowaną pozycję
 
     def show_login_screen(self):
+        self.login_screen.clear_fields()  # Clear fields when showing login screen
         self.stacked_widget.setCurrentWidget(self.login_screen)
 
     def show_register_screen(self):
